@@ -236,8 +236,6 @@ class Dilithium:
         t = t + s2
         t1, t0 = self._power2Round(t)
         pk = self._pack_pk(rho, t1)
-
-        print(_l)
         tr = list(self._kdf(bytes(pk), self.publickeybytes))
         sk = self._pack_sk(rho, key, tr, t0, s1, s2)
         #print(sk)
