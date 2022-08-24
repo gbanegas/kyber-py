@@ -68,8 +68,8 @@ class Dilithium:
         XOF: B^* x B x B -> B*
         """
         input_bytes = bytes32 + a + b
-        if len(input_bytes) != 34:
-            raise ValueError(f"Input bytes should be one 32 byte array and 2 single bytes.")
+        #if len(input_bytes) != 34:
+        #    raise ValueError(f"Input bytes should be one 32 byte array and 2 single bytes.")
         return shake_128(input_bytes).digest(length)
 
     @staticmethod
@@ -93,8 +93,8 @@ class Dilithium:
         PRF: B^32 x B -> B^*
         """
         input_bytes = s + b
-        if len(input_bytes) != 33:
-            raise ValueError(f"Input bytes should be one 32 byte array and one single byte.")
+        #if len(input_bytes) != 33:
+        #    raise ValueError(f"Input bytes should be one 32 byte array and one single byte.")
         return shake_256(input_bytes).digest(length)
 
     @staticmethod
@@ -111,8 +111,8 @@ class Dilithium:
         """
         elements = []
         for i in range(self.l):
-            input_bytes = self._prf(sigma,  bytes([N]), 64*self.eta_1)
-            poly = self.R.cbd(input_bytes, self.eta_1, is_ntt=is_ntt)
+            input_bytes = self._prf(sigma,  bytes([N]), 64*self.eta)
+            poly = self.R.cbd(input_bytes, self.eta, is_ntt=is_ntt)
             elements.append(poly)
             N = N + 1
         v = self.M(elements).transpose()
@@ -125,12 +125,14 @@ class Dilithium:
         """
         elements = []
         for i in range(self.k):
-            input_bytes = self._prf(sigma,  bytes([N]), 64*self.eta_1)
-            poly = self.R.cbd(input_bytes, self.eta_1, is_ntt=is_ntt)
+            input_bytes = self._prf(sigma,  bytes([N]), 64*self.eta)
+            poly = self.R.cbd(input_bytes, self.eta, is_ntt=is_ntt)
             elements.append(poly)
             N = N + 1
         v = self.M(elements).transpose()
         return v, N
+
+
 
     def _generate_matrix_from_seed(self, rho, N, transpose=False, is_ntt=False):
         """
@@ -155,27 +157,61 @@ class Dilithium:
         return self.M(A), N
 
 
-    @staticmethod
-    def rounding(self, t):
-        a1 = (a+ (1 << (self.d-1) -1)) >> self.d
-        a0 = a - (a1 << self.d)
+
+    def _rounding(self, t):
+        a1 = (t + (1 << (self.d-1) -1)) >> self.d
+        a0 = t - (a1 << self.d)
         return a0, a1
 
-    @staticmethod
-    def _power2Round(self, t):
+
+    def _power2Round(self, t_in):
         t1 = []
         t0 = []
         for i in range(self.k):
+            tmp0 = []
+            tmp1 = []
             for j in range(self.n):
-                a0, a1 = rounding(t[i][j])
-                t1.append(a1)
-                t0.append(a0)
+                a0, a1 = self._rounding(t_in[i][0][j])
+                tmp1.append(a1)
+                tmp0.append(a0)
+            t1.append(tmp1)
+            t0.append(tmp0)
         return t1, t0
 
-    @staticmethod
-    def pack_pk(self, rho, t1):
-        t1enc = t1.encode()
-        return rho+t1enc
+    def _polyt1_pack(self, t1):
+        pk = []
+        idx = int(self.n/4)
+        for j in range(idx):
+            pk.append((t1[4*j+0] >> 0) % 255);
+            pk.append(((t1[4*j+0] >> 8 ) | (t1[4*j+1] << 2 ) ) % 255);
+            pk.append(((t1[4*j+1] >> 6 ) | (t1[4*j+2] << 4 )) % 255);
+            pk.append(((t1[4*j+2] >> 4 ) | (t1[4*j+3] << 6 )) % 255);
+            pk.append(((t1[4*j+3] >> 2 )) % 255);
+        return pk
+
+
+    def _pack_pk(self, rho, t1):
+        pk = []
+        for i in range(32):
+            pk.append(rho[i])
+        for i in range(self.k):
+            res = self._polyt1_pack(t1[i])
+            pk += res
+        return pk
+
+    def _pack_sk(self, rho, key, tr, t0, s1, s2):
+        sk = []
+        for i in range(32):
+            sk.append(rho[i])
+
+        for i in range(32):
+            sk.append(key[i])
+
+        for i in range(48):
+            sk.append(tr[i])
+
+
+        return sk
 
     def keygen(self):
         """
@@ -192,16 +228,21 @@ class Dilithium:
         key = rhoprime[64::]
         N = 0
         A, N = self._generate_matrix_from_seed(rho, N, transpose=False, is_ntt=True)
-        s1, N = self._generate_error_vectorl(rhoprime, N).to_ntt()
+        s1, N = self._generate_error_vectorl(rhoprime, N)
+        s1_h = s1.to_ntt()
         s2, N = self._generate_error_vectork(rhoprime, N)
-        t = A @ s1
+        t = A @ s1_h
         t = t.from_ntt()
         t = t + s2
         t1, t0 = self._power2Round(t)
-        pk = delf._pack_pk(rho, t1)
-        tr = self._kdf(pk, self.publickeybytes)
+        pk = self._pack_pk(rho, t1)
 
-        return pk
+        print(_l)
+        tr = list(self._kdf(bytes(pk), self.publickeybytes))
+        sk = self._pack_sk(rho, key, tr, t0, s1, s2)
+        #print(sk)
+
+        return pk, sk
 
 
 
