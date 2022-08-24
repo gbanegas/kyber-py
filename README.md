@@ -1,8 +1,10 @@
 # CRYSTALS-Kyber Python Implementation
 
 This repository contains a pure python implementation of CRYSTALS-Kyber 
-following the most recent (v3.02)
-[specification](https://pq-crystals.org/kyber/data/kyber-specification-round3-20210804.pdf))
+following (at the time of writing) the most recent 
+[specification](https://pq-crystals.org/kyber/data/kyber-specification-round3-20210804.pdf)
+(v3.02)
+
 
 ## Disclaimer
 
@@ -50,44 +52,34 @@ The above example would also work with `Kyber768` and `Kyber1024`.
 
 For now, here are some approximate benchmarks:
 
-#### Kyber-512
+|  1000 Iterations         | Kyber512 | Kyber768 | Kyber1024 |
+|--------------------------|----------|----------|-----------|
+| `KeyGen()`               |  6.842s  | 10.246s  | 14.921s   |
+| `Encrypt()`              | 10.092s  | 14.817s  | 20.549s   |
+| `Decrypt()`              | 15.812s  | 22.910s  | 31.173s   |
 
-```python
->>> timeit("Kyber512.keygen()", globals=globals(), number=1000) / 1000
-0.005577755830003298
->>> timeit("Kyber512.encrypt(pk)", globals=globals(), number=1000) / 1000
-0.010908756061995518
->>> timeit("Kyber512.decrypt(c, sk)", globals=globals(), number=1000) / 1000
-0.01810154920700006
-```
-
-#### Kyber-768
-
-```python
->>> timeit("Kyber768.keygen()", globals=globals(), number=1000) / 1000
-0.008204252133997215
->>> timeit("Kyber768.encrypt(pk)", globals=globals(), number=1000) / 1000
-0.015505350967003324
->>> timeit("Kyber768.decrypt(c, sk)", globals=globals(), number=1000) / 1000
-0.026082826769998065
-```
-
-#### Kyber-1024
-
-```python
->>> timeit("Kyber1024.keygen()", globals=globals(), number=1000) / 1000
-0.01213216471499618
->>> timeit("Kyber1024.encrypt(pk)", globals=globals(), number=1000) / 1000
-0.021581338303003576
->>> timeit("Kyber1024.decrypt(c, sk)", globals=globals(), number=1000) / 1000
-0.03543514921599854
-```
+All times recorded using a MacBook Pro using a Intel Core i7 CPU @ 2.6 GHz.
 
 ## Future Plans
 
-* **High priority**: Assure that output matches the Known Answer Test files
-* Faster polynomial multiplication by performing Barrett reduction
+* Write my own AES-256 CRT DRGB so we can have full coverage of the known test answers
 * Add documentation on `NTT` transform for polynomials
+* Add documentation on Montgomery and Barrett reduction
+
+### Known Test Answers
+
+To perfectly test with the Known Test Answers, we need to seed our own
+AES-256 CRT DRGB to get deterministic randomness. Currently,
+I use system randomness (via `os.urandom()`).
+
+As such, I cannot do the full KATs, but only perform the partial check that
+
+```py
+Kyber.decrypt(ct, sk) == ss
+```
+
+Using `ct, sk, ss` from the KAT files. This is the same trick used as in 
+[kyber-k2so](https://github.com/symbolicsoft/kyber-k2so)
 
 ### Include Dilithium
 

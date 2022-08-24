@@ -88,21 +88,21 @@ class Kyber:
         """
         return shake_256(input_bytes).digest(length)
     
-    def _generate_error_vector(self, sigma, N, is_ntt=False):
+    def _generate_error_vector(self, sigma, eta, N, is_ntt=False):
         """
         Helper function which generates a element in the
         module from the Centered Binomial Distribution.
         """
         elements = []
         for i in range(self.k):
-            input_bytes = self._prf(sigma,  bytes([N]), 64*self.eta_1)
-            poly = self.R.cbd(input_bytes, self.eta_1, is_ntt=is_ntt)
+            input_bytes = self._prf(sigma,  bytes([N]), 64*eta)
+            poly = self.R.cbd(input_bytes, eta, is_ntt=is_ntt)
             elements.append(poly)
             N = N + 1
         v = self.M(elements).transpose()
         return v, N
         
-    def _generate_matrix_from_seed(self, rho, N, transpose=False, is_ntt=False):
+    def _generate_matrix_from_seed(self, rho, transpose=False, is_ntt=False):
         """
         Helper function which generates a element of size
         k x k from a seed `rho`.
@@ -120,10 +120,9 @@ class Kyber:
                     input_bytes = self._xof(rho, bytes([j]), bytes([i]), 3*self.R.n)
                 aij = self.R.parse(input_bytes, is_ntt=is_ntt)
                 row.append(aij)
-                N = N + 1
             A.append(row)
-        return self.M(A), N
-    
+        return self.M(A)
+        
     def _cpapke_keygen(self):
         """
         Algorithm 4 (Key Generation)
@@ -138,25 +137,26 @@ class Kyber:
         # Generate random value, hash and split
         d = os.urandom(32)
         rho, sigma = self._g(d)
-        
         # Set counter for PRF
         N = 0
         
         # Generate the matrix A ∈ R^kxk
-        A, N = self._generate_matrix_from_seed(rho, N, is_ntt=True)
+        A = self._generate_matrix_from_seed(rho, is_ntt=True)
         
         # Generate the error vector s ∈ R^k
-        s, N = self._generate_error_vector(sigma, N)
+        s, N = self._generate_error_vector(sigma, self.eta_1, N)
+        s.to_ntt()
         
         # Generate the error vector e ∈ R^k
-        e, N = self._generate_error_vector(sigma, N)
-                
-        # Convert elements to NTT form
-        s.to_ntt()
-        e.to_ntt()                
-            
+        e, N = self._generate_error_vector(sigma, self.eta_1, N)
+        e.to_ntt() 
+                           
         # Construct the public key
-        t = A @ s + e
+        t = (A @ s).to_montgomery() + e
+        
+        # Reduce vectors mod^+ q
+        t.reduce_coefficents()
+        s.reduce_coefficents()
         
         # Encode elements to bytes and return
         pk = t.encode(l=12) + rho
@@ -176,30 +176,33 @@ class Kyber:
             c:  ciphertext
         """
         N = 0
-        _pk, rho = pk[:-32], pk[-32:]
-        t = self.M.decode(_pk, self.k, 1, l=12, is_ntt=True)
+        rho = pk[-32:]
+        
+        tt = self.M.decode(pk, 1, self.k, l=12, is_ntt=True)        
+        
+        # Encode message as polynomial
+        m_poly = self.R.decode(m, l=1).decompress(1)
         
         # Generate the matrix A^T ∈ R^(kxk)
-        At, N = self._generate_matrix_from_seed(rho, N, transpose=True, is_ntt=True)
+        At = self._generate_matrix_from_seed(rho, transpose=True, is_ntt=True)
         
         # Generate the error vector r ∈ R^k
-        r, N = self._generate_error_vector(coins, N)
+        r, N = self._generate_error_vector(coins, self.eta_1, N)
         r.to_ntt()
         
         # Generate the error vector e1 ∈ R^k
-        e1, N = self._generate_error_vector(coins, N)
+        e1, N = self._generate_error_vector(coins, self.eta_2, N)
         
         # Generate the error polynomial e2 ∈ R
         input_bytes = self._prf(coins,  bytes([N]), 64*self.eta_2)
         e2 = self.R.cbd(input_bytes, self.eta_2)
         
-        m_poly = self.R.decode(m, l=1).decompress(1)
-        
-        
+        # Module/Polynomial arithmatic 
         u = (At @ r).from_ntt() + e1
-        v = (t.transpose() @ r)[0][0].from_ntt()
+        v = (tt @ r)[0][0].from_ntt()
         v = v + e2 + m_poly
         
+        # Ciphertext to bytes
         c1 = u.compress(self.du).encode(l=self.du)
         c2 = v.compress(self.dv).encode(l=self.dv)
         
@@ -216,15 +219,25 @@ class Kyber:
         Output:
             m:  message ∈ B^32
         """
+        # Split ciphertext to vectors
         index = self.du * self.k * self.R.n // 8
-        c1, c2 = c[:index], c[index:]
-        u = self.M.decode(c1, self.k, 1, l=self.du).decompress(self.du)
+        c2 = c[index:]
+        
+        # Recover the vector u and convert to NTT form
+        u = self.M.decode(c, self.k, 1, l=self.du).decompress(self.du)
         u.to_ntt()
+        
+        # Recover the polynomial v
         v = self.R.decode(c2, l=self.dv).decompress(self.dv)
+        
+        # s_transpose (already in NTT form)
         st = self.M.decode(sk, 1, self.k, l=12, is_ntt=True)
         
+        # Recover message as polynomial
         m = (st @ u)[0][0].from_ntt()
         m = v - m
+        
+        # Return message as bytes
         return m.compress(1).encode(l=1)
         
     def keygen(self):
@@ -239,6 +252,7 @@ class Kyber:
         """
         z = os.urandom(32)
         pk, _sk = self._cpapke_keygen()
+        # sk = sk' || pk || H(pk) || z
         sk = _sk + pk + self._h(pk) + z
         return pk, sk
         
@@ -289,36 +303,11 @@ class Kyber:
         # if decapsulation was successful return K
         if c == _c:
             return self._kdf(_Kbar + self._h(c), key_length)
-        # decapsulation failed... return random value
+        # Decapsulation failed... return random value
         return self._kdf(z + self._h(c), key_length)
 
-# Initialise with default parameters
+# Initialise with default parameters for easy import
 Kyber512 = Kyber(DEFAULT_PARAMETERS["kyber_512"])
 Kyber768 = Kyber(DEFAULT_PARAMETERS["kyber_768"])
 Kyber1024 = Kyber(DEFAULT_PARAMETERS["kyber_1024"])
-
-if __name__ == '__main__':
-    # Test kyber_512
-    pk, sk = Kyber512.keygen()
-    for _ in range(10):
-        c, key = Kyber512.encrypt(pk)
-        _key = Kyber512.decrypt(c, sk)
-        assert key == _key
     
-    # Test kyber_768
-    pk, sk = Kyber768.keygen()
-    for _ in range(10):
-        c, key = Kyber768.encrypt(pk)
-        _key = Kyber768.decrypt(c, sk)
-        assert key == _key
-        
-    # Test kyber_1024
-    pk, sk = Kyber1024.keygen()
-    for _ in range(10):
-        c, key = Kyber1024.encrypt(pk)
-        _key = Kyber1024.decrypt(c, sk)
-        assert key == _key
-
-
-
-
