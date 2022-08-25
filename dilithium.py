@@ -159,8 +159,15 @@ class Dilithium:
 
 
     def _rounding(self, t):
+        print("t: {}".format(t))
+        print( ((1 << (self.d-1)) -1))
+        res = (t + 2048)
+        print(res)
+        tmm = res >> self.d
+        print("tmm: {}".format(tmm))
         a1 = (t + (1 << (self.d-1) -1)) >> self.d
         a0 = t - (a1 << self.d)
+        print(a1)
         return a0, a1
 
 
@@ -176,11 +183,13 @@ class Dilithium:
                 tmp0.append(a0)
             t1.append(tmp1)
             t0.append(tmp0)
+
         return t1, t0
 
     def _polyt1_pack(self, t1):
         pk = []
         idx = int(self.n/4)
+        print(t1)
         for j in range(idx):
             pk.append((t1[4*j+0] >> 0) % 255);
             pk.append(((t1[4*j+0] >> 8 ) | (t1[4*j+1] << 2 ) ) % 255);
@@ -196,8 +205,68 @@ class Dilithium:
             pk.append(rho[i])
         for i in range(self.k):
             res = self._polyt1_pack(t1[i])
+
             pk += res
         return pk
+
+    def _polyeta_pack(self, pol):
+        tmp = []
+
+        if self.eta == 2:
+
+            idx = int(self.n/8)
+
+            for i in range(idx):
+                t = []
+                t.append(self.eta - pol[0][8*i+0])
+                t.append(self.eta - pol[0][8*i+1])
+                t.append(self.eta - pol[0][8*i+2])
+                t.append(self.eta - pol[0][8*i+3])
+                t.append(self.eta - pol[0][8*i+4])
+                t.append(self.eta - pol[0][8*i+5])
+                t.append(self.eta - pol[0][8*i+6])
+                t.append(self.eta - pol[0][8*i+7])
+
+                a = ((t[0] >> 0) | (t[1] << 3) | (t[2] << 6)) % 255
+                b = ((t[2] >> 2) | (t[3] << 1) | (t[4] << 4) | (t[5] << 7)) % 255
+                c = ((t[5] >> 1) | (t[6] << 2) | (t[7] << 5)) % 255
+
+                tmp.append(a)
+                tmp.append(b)
+                tmp.append(c)
+        if self.eta == 4:
+
+            idx = int(self.n/2)
+
+            for i in range(idx):
+                t = []
+                t.append(self.eta - pol[0][2*i+0])
+                t.append(self.eta - pol[0][2*i+1])
+                a = (t[0] | (t[1] << 4)) % 255
+                tmp.append(a)
+
+
+
+        return tmp
+
+    def _polyt0_pack(self, t0):
+        idx = int(self.n/8)
+        tmp = []
+        for i in range(idx):
+            t = []
+            tmp_val = (1 << (self.d-1))
+            t.append(( tmp_val - t0[8*i+0]))
+            t.append(( tmp_val - t0[8*i+1]))
+            t.append(( tmp_val - t0[8*i+2]))
+            t.append(( tmp_val - t0[8*i+3]))
+            t.append(( tmp_val - t0[8*i+4]))
+            t.append(( tmp_val - t0[8*i+5]))
+            t.append(( tmp_val - t0[8*i+6]))
+            t.append(( tmp_val - t0[8*i+7]))
+
+            tmp.append((t[0] % 255))
+        return tmp
+
 
     def _pack_sk(self, rho, key, tr, t0, s1, s2):
         sk = []
@@ -209,6 +278,19 @@ class Dilithium:
 
         for i in range(48):
             sk.append(tr[i])
+
+        for i in range(self.l):
+            pack_tmp = self._polyeta_pack(s1[i])
+            sk += pack_tmp
+
+        for i in range(self.k):
+            pack_tmp = self._polyeta_pack(s2[i])
+            sk += pack_tmp
+
+        for i in range(self.k):
+            pack_tmp = self._polyt0_pack(t0[i])
+            sk += pack_tmp
+
 
 
         return sk
@@ -234,6 +316,7 @@ class Dilithium:
         t = A @ s1_h
         t = t.from_ntt()
         t = t + s2
+        s1 = s1.from_ntt()
         t1, t0 = self._power2Round(t)
         pk = self._pack_pk(rho, t1)
         tr = list(self._kdf(bytes(pk), self.publickeybytes))
@@ -248,4 +331,6 @@ Dilithium2 = Dilithium(DEFAULT_PARAMETERS["dilithium_2"])
 
 if __name__ == '__main__':
     # Test kyber_512
-    pk = Dilithium2.keygen()
+    pk,sk = Dilithium2.keygen()
+    print("pk:\n\n {} \n\n".format(pk))
+    print("sk:\n\n {} \n\n".format(sk))
